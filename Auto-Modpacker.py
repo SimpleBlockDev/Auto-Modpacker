@@ -964,7 +964,7 @@ HTTP_RETRIES = 2
 # c014
 STRICT_NAME_MATCH = True
 
-SIDE_LIST_URL = "https://raw.githubusercontent.com/SimpleBlockDev/Auto-Modpacker/main/Manual-Side-Mods/list.txt"
+SIDE_LIST_URL = "https://raw.githubusercontent.com/simpleblockdev/Auto-Modpacker/main/Manual-Side-Mods/list.txt"
 SIDE_LIST_CACHE_TTL = 24 * 3600
 SIDE_LIST_CACHE_KEY = "side_list_v1"
 _SIDE_LIST_STATE = None
@@ -6661,7 +6661,7 @@ def print_banner():
     say(f"{GREEN}{BOLD}{tr['banner_title']}{RESET}")
     say(f"{GREEN}{tr['banner_discord1']}{RESET}")
     say(f"{GREEN}{tr['banner_discord2']}{RESET}")
-    say("  https://discord.gg/NfCMbvqFVw")
+    say("  https://discord.gg/9KmaCbz9HQ")
     say()
     say(f"{BOLD}{tr['banner_verify']}{RESET}")
     say(tr["banner_vt"])
