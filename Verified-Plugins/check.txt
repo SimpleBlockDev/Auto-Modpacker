@@ -1,1 +1,13 @@
+# modul id is id of modul assigned by the module developer at the beginning of the modul
 
+# strict level is Maximum level of module interaction
+# 1 level is full access 
+# 2 Internet access without running individual modules and installing them, and it cannot interact with Auto-Modpacker.py and other modules
+# 3 level is interaction with mods, i.e. deleting, modifying mod files and creating your own files if they are directly written in the module AND IT CANNOT INSTALL ITS CODE FROM THE INTERNET There is interaction with the Internet, but the basic one is to ask the status of the variable
+# 4 Interact with files offline
+
+# modulDESCRIPTION is Description of the module and what it offers in the installer
+
+modulID = Example.py
+strictlevel = 1
+modulDESCRIPTION = test
