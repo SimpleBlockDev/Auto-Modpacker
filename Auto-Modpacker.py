@@ -22,6 +22,8 @@ import types
 import sys
 import zlib
 import http.client
+import socket
+import ipaddress
 
 try:
     import tomllib
@@ -131,7 +133,14 @@ T = {
         "banner_guide2": '2. В личном кабинете: API Keys -> создать Core API Key',
         "banner_guide3": '3. Скопировать ключ, вставить командой: key <твой_ключ>',
         "banner_key_note": 'Ключ сохраняется локально в CurseForgeApiKey_DO_NOT_SHARE.txt. Не пересылай этот файл.',
-        "commands": 'Команды: run | aternos | explain <modid> | stats | updates | scan | clean | report | search | show | save | saveall | bulk | addons | build | newaddons | importlink | modupdate | finder <команда> | help | exit',
+        "commands": 'Команды: run | aternos | explain <modid> | stats | updates | scan | clean | report | search | show | save | saveall | bulk | addons | build | newaddons | importlink | modupdate | finder <команда> | lang | help | exit',
+        "lang_current": 'Текущий язык: {code} ({name})',
+        "lang_available": 'Доступные языки:',
+        "lang_list_item": '  {code} — {name}',
+        "lang_usage": 'Использование: lang | lang <код>',
+        "lang_switched": 'Язык переключён: {code} ({name})',
+        "lang_unknown": 'Нет такого языка: {code}',
+        "lang_error": 'Не удалось переключить язык: {code}',
         "cf_fallback_tag": "(CurseForge) ",
         "side_list_tag": "(список Manual-Side-Mods) ",
         "key_set": 'CurseForge API-ключ установлен и сохранён на устройстве он никуда не передаётся.',
@@ -393,7 +402,14 @@ T = {
         "banner_guide2": '2. In your account: API Keys -> create Core API Key',
         "banner_guide3": '3. Copy the key and enter it with: key <your_key>',
         "banner_key_note": 'The key is saved locally in CurseForgeApiKey_DO_NOT_SHARE.txt. Do not forward this file.',
-        "commands": 'Commands: run | aternos | explain <modid> | stats | updates | scan | clean | report | search | show | save | saveall | bulk | addons | build | newaddons | importlink | modupdate | finder <command> | help | exit',
+        "commands": 'Commands: run | aternos | explain <modid> | stats | updates | scan | clean | report | search | show | save | saveall | bulk | addons | build | newaddons | importlink | modupdate | finder <command> | lang | help | exit',
+        "lang_current": 'Current language: {code} ({name})',
+        "lang_available": 'Available languages:',
+        "lang_list_item": '  {code} — {name}',
+        "lang_usage": 'Usage: lang | lang <code>',
+        "lang_switched": 'Language switched: {code} ({name})',
+        "lang_unknown": 'No such language: {code}',
+        "lang_error": 'Could not switch language: {code}',
         "cf_fallback_tag": "(CurseForge) ",
         "side_list_tag": "(Manual-Side-Mods list) ",
         "key_set": 'The CurseForge API key has been set and saved on the device; it is not sent anywhere.',
@@ -721,6 +737,8 @@ HELP_GROUPS = {
              'Сравнивает папки двух сборок, включая вложенную папку mods/.\nСопоставляет моды по modId, а при его отсутствии по названию. Показывает добавленные, удалённые, обновлённые и изменившиеся JAR.'),
         ]),
         ('Прочее', [
+            ("lang [ru|en|код]",
+             'Переключает язык интерфейса без перезапуска.\nБез аргументов показывает текущий и доступные языки.'),
             ("help",
              'Этот список.'),
             ("exit",
@@ -854,6 +872,8 @@ HELP_GROUPS = {
              "Matches mods by modId, or by name when modId is unavailable. Reports added, removed, updated and changed JAR files."),
         ]),
         ("Other", [
+            ("lang [ru|en|code]",
+             "Switches the interface language without restarting.\nWith no arguments, shows the current and available languages."),
             ("help", "This list."),
             ("exit", "Quit."),
         ]),
@@ -3588,7 +3608,7 @@ def do_clean(args):
 
     total_size = sum(size for _, _, size in junk)
     for cat, entries in by_cat.items():
-        label = tr.get(f"clean_cat_{cat}", cat)
+        label = tr[f"clean_cat_{cat}"]
         say(f"{BOLD}{label}{RESET} ({len(entries)}):")
         for relpath, size in entries:
             say(f"  {relpath}  ({size / 1024:.0f} KB)")
@@ -4343,8 +4363,9 @@ UPD_TEXT = {
 
 
 def upd_t(key, **kw):
-    table = UPD_TEXT["ru" if LANG == "ru" else "en"]
-    text = table.get(key, UPD_TEXT["ru"].get(key, key))
+    text = UPD_TEXT.get(LANG, {}).get(key)
+    if text is None:
+        text = UPD_TEXT["en"].get(key, key)
     return text.format(**kw) if kw and isinstance(text, str) else text
 
 
@@ -5792,7 +5813,7 @@ def upd_cmd_rollback():
                 try:
                     same = not e.get("new_sha256") or file_sha256(path) == e["new_sha256"]
                     if not same:
-                        raise OSError("файл изменён" if LANG == "ru" else "file was changed")
+                        raise OSError(mtext("файл изменён", "file was changed"))
                     os.makedirs(removed_dir, exist_ok=True)
                     shutil.move(path, os.path.join(removed_dir, new_name))
                     say(upd_t("rollback_removed", name=new_name))
@@ -5804,10 +5825,10 @@ def upd_cmd_rollback():
             src, dst = os.path.join(bdir, "old", old_name), os.path.join(SCRIPT_DIR, old_name)
             if not os.path.isfile(src):
                 skipped += 1
-                say(f"{YELLOW}{upd_t('rollback_skip', name=old_name, why='нет в бэкапе' if LANG == 'ru' else 'not in the backup')}{RESET}")
+                say(f"{YELLOW}{upd_t('rollback_skip', name=old_name, why=mtext('нет в бэкапе', 'not in the backup'))}{RESET}")
             elif os.path.exists(dst):
                 skipped += 1
-                say(f"{YELLOW}{upd_t('rollback_skip', name=old_name, why='имя занято' if LANG == 'ru' else 'name is taken')}{RESET}")
+                say(f"{YELLOW}{upd_t('rollback_skip', name=old_name, why=mtext('имя занято', 'name is taken'))}{RESET}")
             else:
                 try:
                     shutil.move(src, dst)
@@ -6200,7 +6221,7 @@ def build_report_html(tr, update_rows, scan_findings):
                            f"{broken_rows}</table>")
 
     return f"""<!DOCTYPE html>
-<html lang="{'ru' if LANG == 'ru' else 'en'}">
+<html lang="{LANG}">
 <head>
 <meta charset="utf-8">
 <title>Modpack Report {esc(generated)}</title>
@@ -6676,21 +6697,185 @@ def print_banner():
     say()
     say(tr["commands"])
 
-def choose_language():
+# c174
+PENDING_LANG = None
+LANG_PACKS = {}
+LANG_OWNERS = {}
+LANG_PHRASES = {}
+LANG_MODULE_MANUAL = {}
+LANG_FINDER_T = {}
+LANG_FINDER_DEP = {}
+LANG_CODE_RE = re.compile(r"[a-z]{2,12}")
+VERIFIED_REPO = "SimpleBlockDev/Auto-Modpacker"
+VERIFIED_BRANCH = "main"
+VERIFIED_DIR = "Verified-Plugins"
+VERIFIED_INDEX_URL = f"https://api.github.com/repos/{VERIFIED_REPO}/contents/{VERIFIED_DIR}?ref={VERIFIED_BRANCH}"
+VERIFIED_RAW_BASE = f"https://raw.githubusercontent.com/{VERIFIED_REPO}/{VERIFIED_BRANCH}/{VERIFIED_DIR}/"
+VERIFIED_MAX_FILE = 5 * 1024 * 1024
+QUARANTINE_DIR = os.path.join(SCRIPT_DIR, "quarantine")
+VERIFIED_INDEX_CACHE = {"ts": 0, "items": None}
+VERIFIED_SYNC_ACTIVE = False
+
+
+def lang_codes():
+    return ["ru", "en"] + sorted(code for code in LANG_PACKS if code not in ("ru", "en"))
+
+
+def lang_display_name(code):
+    if code == "ru":
+        return "Русский"
+    if code == "en":
+        return "English"
+    pack = LANG_PACKS.get(code)
+    return pack["name"] if pack else code
+
+
+def lang_apply(code, save=True):
     global LANG
+    if code not in lang_codes():
+        return False
+    LANG = code
+    if save:
+        MODUL_STATE["lang"] = code
+        modul_save_state()
+    _auto_finder_sync()
+    return True
+
+# c177
+def lang_register_pack(owner, code, name, data):
+    if not isinstance(code, str) or not LANG_CODE_RE.fullmatch(code) or code in ("ru", "en"):
+        raise ValueError(mtext("код языка: a-z, 2-12 символов, не ru/en", "language code: a-z, 2-12 chars, not ru/en"))
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError(mtext("нужно имя языка", "language name is required"))
+    if not isinstance(data, dict):
+        raise ValueError(mtext("данные языка должны быть словарём", "language data must be a dictionary"))
+    required = ("t", "help", "upd", "mtext", "module_disclaimer", "module_mode_text",
+                "module_help", "module_manual", "finder_t", "finder_dep_type")
+    for key in required:
+        if key not in data:
+            raise ValueError(mtext("языковой пакет неполный: ", "language pack is incomplete: ") + key)
+    for key in ("t", "upd", "mtext", "finder_t", "finder_dep_type"):
+        if not isinstance(data[key], dict):
+            raise ValueError(mtext("раздел языка должен быть словарём: ", "language section must be a dictionary: ") + key)
+    for key in ("help", "module_disclaimer", "module_mode_text", "module_help"):
+        if not isinstance(data[key], (list, tuple)):
+            raise ValueError(mtext("раздел языка должен быть списком: ", "language section must be a list: ") + key)
+    if not isinstance(data["module_manual"], str):
+        raise ValueError(mtext("мануал языка должен быть текстом", "the language manual must be text"))
+    for key in ("plugins", "keys"):
+        if key in data and not isinstance(data[key], dict):
+            raise ValueError(mtext("раздел языка должен быть словарём: ", "language section must be a dictionary: ") + key)
+    old = LANG_PACKS.get(code)
+    if old is not None and old["owner"] != owner:
+        raise ValueError(mtext("язык уже занят другим модулем: ", "language is already used by another module: ") + code)
+    if not isinstance(data["t"], dict) or "modules_title" not in data["t"]:
+        raise ValueError(mtext("языковой пакет неполный: ", "language pack is incomplete: ") + "modules_title")
+    for key in ("required", "optional", "incompatible", "embedded"):
+        if key not in data["finder_dep_type"]:
+            raise ValueError(mtext("языковой пакет неполный: ", "language pack is incomplete: ") + key)
+    for key in ("finder_title", "label_search", "label_show", "label_save", "label_saveall", "label_bulk",
+                "label_addons", "label_build", "label_newaddons", "label_importlink", "label_modupdate",
+                "label_finder", "label_key", "label_slug", "finder_prefix_help",
+                "help_search", "help_show", "help_save", "help_saveall", "help_bulk", "help_addons",
+                "help_build", "help_newaddons", "help_importlink", "help_update", "help_slug", "help_key"):
+        if key not in data["finder_t"]:
+            raise ValueError(mtext("языковой пакет неполный: ", "language pack is incomplete: ") + key)
+    LANG_PACKS[code] = {"name": modul_one_line(name, 40), "owner": owner, "data": data}
+    LANG_OWNERS.setdefault(owner, set()).add(code)
+    T[code] = dict(data["t"])
+    HELP_GROUPS[code] = list(data["help"])
+    UPD_TEXT[code] = dict(data["upd"])
+    LANG_PHRASES[code] = dict(data["mtext"])
+    MODUL_DISCLAIMER[code] = data["module_disclaimer"]
+    MODUL_MODE_TEXT[code] = data["module_mode_text"]
+    MODUL_HELP_ROWS[code] = list(data["module_help"])
+    HELP_GROUPS[code].append((data["t"]["modules_title"], MODUL_HELP_ROWS[code]))
+    LANG_MODULE_MANUAL[code] = data["module_manual"]
+    LANG_FINDER_T[code] = dict(data["finder_t"])
+    LANG_FINDER_DEP[code] = dict(data["finder_dep_type"])
+    return True
+
+
+def lang_unregister_owner(owner):
+    global LANG, PENDING_LANG
+    for code in list(LANG_OWNERS.pop(owner, set())):
+        LANG_PACKS.pop(code, None)
+        T.pop(code, None)
+        HELP_GROUPS.pop(code, None)
+        UPD_TEXT.pop(code, None)
+        LANG_PHRASES.pop(code, None)
+        MODUL_DISCLAIMER.pop(code, None)
+        MODUL_MODE_TEXT.pop(code, None)
+        MODUL_HELP_ROWS.pop(code, None)
+        LANG_MODULE_MANUAL.pop(code, None)
+        LANG_FINDER_T.pop(code, None)
+        LANG_FINDER_DEP.pop(code, None)
+        if LANG == code:
+            LANG = "en" if MODUL_STATE.get("lang") == "en" else "ru"
+            PENDING_LANG = code
+            say(f"{YELLOW}lang: {code} unloaded, switched to {LANG}{RESET}")
+
+
+def lang_plugin_text(module_id, key, ru="", en=""):
+    if LANG == "ru":
+        return ru
+    if LANG == "en":
+        return en
+    pack = LANG_PACKS.get(LANG)
+    if pack is not None:
+        plugins = pack["data"].get("plugins", {})
+        if module_id in plugins and key in plugins[module_id]:
+            return plugins[module_id][key]
+        keys = pack["data"].get("keys", {})
+        full = f"plugin.{module_id}.{key}"
+        if full in keys:
+            return keys[full]
+    return en or ru
+
+
+def choose_language():
+    global LANG, PENDING_LANG
+    saved = MODUL_STATE.get("lang", "ru")
+    if saved not in ("ru", "en"):
+        PENDING_LANG = saved
+        LANG = "en"
+        return
+    default = saved if saved in ("ru", "en") else "ru"
     while True:
         try:
-            choice = input("Выберите язык / Choose language [ru/en]: ").strip().lower()
+            choice = input(f"Выберите язык / Choose language [ru/en] ({default}): ").strip().lower()
         except EOFError:
-            LANG = "ru"
+            LANG = default
+            MODUL_STATE["lang"] = LANG
+            modul_save_state()
             return
         log_console_raw(f"> {choice}")
+        if not choice:
+            choice = default
         if choice in ("ru", "en"):
             LANG = choice
+            MODUL_STATE["lang"] = choice
+            modul_save_state()
             return
-        if not choice:
-            LANG = "ru"
-            return
+
+
+def lang_restore(keep_missing=False):
+    global LANG, PENDING_LANG
+    if not PENDING_LANG:
+        return
+    code = PENDING_LANG
+    if code in LANG_PACKS:
+        PENDING_LANG = None
+        lang_apply(code, save=False)
+        say(f"{GREEN}lang: {code} ({lang_display_name(code)}){RESET}")
+        return
+    if keep_missing:
+        return
+    PENDING_LANG = None
+    LANG = "en" if MODUL_STATE.get("lang") == "en" else "ru"
+    MODUL_STATE["lang"] = LANG
+    modul_save_state()
+    say(f"{YELLOW}lang: {code} is not available, switched to {LANG}{RESET}")
 
 # c091
 
@@ -6699,34 +6884,39 @@ MODUL_DATA_DIR = os.path.join(SCRIPT_DIR, "modul_data")
 MODUL_MANUAL_PATH = os.path.join(SCRIPT_DIR, "MODUL_MANUAL.txt")
 MODUL_EXT = (".py", ".txt")
 MODUL_KEYS = ("idname", "idmodul", "iddescription", "idversion")
-MODUL_ALL_KEYS = MODUL_KEYS + ("idperms",)
+MODUL_ALL_KEYS = MODUL_KEYS + ("idperms", "strictlevel", "modulid", "moduldescription")
 MODUL_MODES = ("strict", "on", "off")
 MODUL_EVENTS = ("start", "run_done", "command", "exit")
 MODUL_BUILTIN_CMDS = {
     "key", "run", "logs", "timeline", "compare", "buildcompare", "aternos", "stats", "explain",
     "disable", "enable", "rename", "unrename", "remove", "export", "crash",
     "crashlog", "graphic", "orphan", "scan", "dupres", "clean", "version",
-    "updates", "install", "update", "report", "help", "exit", "modul",
+    "updates", "install", "update", "report", "help", "exit", "modul", "lang",
 }
 #F Auto-Finder commands are built-ins too; modules cannot shadow them.
 MODUL_BUILTIN_CMDS.update({
     "search", "show", "save", "saveall", "bulk", "addons", "build",
     "newaddons", "importlink", "modupdate", "finder",
 })
-MODUL_HEADER_RE = re.compile(r"^\s*#?\s*(id[a-z]+)\s*=(.*)$", re.I)
+MODUL_HEADER_RE = re.compile(r"^\s*#?\s*(id[a-z]+|strictlevel|modulid|moduldescription)\s*=(.*)$", re.I)
 MODUL_ID_RE = re.compile(r"[a-z0-9_]{1,32}")
 MODUL_CTRL_RE = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\u200b-\u200f\u202a-\u202e\u2066-\u2069]")
-MODUL_MAX_FILE = 1024 * 1024
 MODUL_COLORS = {"red": RED, "green": GREEN, "yellow": YELLOW, "bold": BOLD, "dim": DIM}
 
-MODUL_STATE = {"security": "on", "disclaimer_ok": False, "enabled": {}, "unprotected": {}}  # c094
+# c173
+MODUL_STATE = {"security": "on", "disclaimer_ok": False, "enabled": {}, "unprotected": {},
+               "lang": "ru", "verified": {}, "quarantine": {}}  # c094
 MODUL_LOADED = {}
 MODUL_COMMANDS = {}
 MODUL_NOTES = {}
 
 
 def mtext(ru, en):
-    return ru if LANG == "ru" else en
+    if LANG == "ru":
+        return ru
+    if LANG == "en":
+        return en
+    return LANG_PHRASES.get(LANG, {}).get(en, en)
 
 
 def modul_clean_text(text):
@@ -6775,7 +6965,37 @@ def modul_load_state():
             if isinstance(mid, str) and MODUL_ID_RE.fullmatch(mid) and isinstance(item, dict) \
                     and isinstance(item.get("sha"), str) and item["sha"]:
                 unprotected[mid] = {"sha": item["sha"], "time": str(item.get("time", ""))[:20]}
-    MODUL_STATE = {"security": security, "disclaimer_ok": bool(data.get("disclaimer_ok")), "enabled": enabled, "unprotected": unprotected}
+    lang = data.get("lang")
+    if not isinstance(lang, str) or not lang:
+        lang = "ru"
+    verified = {}
+    raw_verified = data.get("verified")
+    if isinstance(raw_verified, dict):
+        for mid, item in raw_verified.items():
+            if not isinstance(mid, str) or not MODUL_ID_RE.fullmatch(mid) or not isinstance(item, dict):
+                continue
+            file_name = item.get("file")
+            sha256 = item.get("sha256")
+            level = item.get("level")
+            if not isinstance(file_name, str) or not isinstance(sha256, str):
+                continue
+            if not isinstance(level, int) or level < 1 or level > 5:
+                continue
+            verified[mid] = {"file": modul_one_line(file_name, 120), "sha256": sha256,
+                             "sha1": str(item.get("sha1", ""))[:40], "level": level,
+                             "desc": modul_one_line(str(item.get("desc", "")), 200),
+                             "time": str(item.get("time", ""))[:20]}
+    quarantine = {}
+    raw_quarantine = data.get("quarantine")
+    if isinstance(raw_quarantine, dict):
+        for mid, item in raw_quarantine.items():
+            if isinstance(mid, str) and isinstance(item, dict):
+                quarantine[mid] = {"file": modul_one_line(str(item.get("file", "")), 200),
+                                   "reason": modul_one_line(str(item.get("reason", "")), 300),
+                                   "time": str(item.get("time", ""))[:20]}
+    MODUL_STATE = {"security": security, "disclaimer_ok": bool(data.get("disclaimer_ok")),
+                   "enabled": enabled, "unprotected": unprotected, "lang": lang,
+                   "verified": verified, "quarantine": quarantine}
 
 
 def modul_save_state():
@@ -6853,16 +7073,38 @@ def modul_scan():
         except OSError:
             continue
         fields, _used = modul_parse_header(modul_decode(head))
-        if not all(k in fields for k in MODUL_KEYS):
+        has_standard = all(k in fields for k in MODUL_KEYS)
+        has_verified = all(k in fields for k in ("modulid", "strictlevel", "moduldescription"))
+        known = None
+        for known_id, known_item in MODUL_STATE.get("verified", {}).items():
+            if isinstance(known_item, dict) and known_item.get("file") == fname:
+                known = (known_id, known_item)
+                break
+        if not (has_standard or has_verified) and known is None:
             continue
+        raw_id = fields.get("idmodul") or fields.get("modulid") or (known[0] if known else "")
+        if raw_id.lower().endswith(".py"):
+            raw_id = raw_id[:-3]
+        raw_id = re.sub(r"[^a-z0-9_]", "_", raw_id.lower()).strip("_")[:32]
+        level = None
+        if "strictlevel" in fields:
+            try:
+                level = int(str(fields["strictlevel"]).strip())
+            except (TypeError, ValueError):
+                level = None
+            if level not in (1, 2, 3, 4, 5):
+                level = None
+        elif known and isinstance(known[1].get("level"), int):
+            level = known[1]["level"]
         rec = {
             "file": modul_one_line(fname, 80),
             "path": path,
-            "id": modul_one_line(fields["idmodul"], 40),
-            "name": modul_one_line(fields["idname"], 40),
-            "desc": modul_one_line(fields["iddescription"], 200),
-            "ver": modul_one_line(fields["idversion"], 20),
+            "id": modul_one_line(raw_id, 40),
+            "name": modul_one_line(fields.get("idname") or (known[0] if known else raw_id), 40),
+            "desc": modul_one_line(fields.get("iddescription") or fields.get("moduldescription") or (known[1].get("desc", "") if known else ""), 200),
+            "ver": modul_one_line(fields.get("idversion") or "1.0", 20),
             "declared": [p.lower() for p in re.split(r"[,\s;]+", fields.get("idperms", "")) if p],
+            "level": level,
             "error": None,
             "size": 0,
             "sha": "",
@@ -6870,21 +7112,23 @@ def modul_scan():
         }
         if not MODUL_ID_RE.fullmatch(rec["id"]):
             rec["error"] = mtext("idmodul: только a-z, 0-9 и _ (до 32 символов)", "idmodul: only a-z, 0-9 and _ (up to 32 chars)")
+        elif "strictlevel" in fields and level is None:
+            rec["error"] = mtext("strictlevel: нужно число от 1 до 5", "strictlevel: must be a number from 1 to 5")
         elif rec["id"] in used_ids:
             rec["error"] = mtext("такой idmodul уже есть в другом файле", "this idmodul is already used by another file")
         else:
             used_ids.add(rec["id"])
             try:
                 with open(path, "rb") as f:
-                    raw = f.read(MODUL_MAX_FILE + 1)
+                    raw = f.read()
             except OSError:
                 raw = b""
                 rec["error"] = mtext("файл не читается", "cannot read the file")
-            if len(raw) > MODUL_MAX_FILE:
-                rec["error"] = mtext("файл больше 1 МБ", "file is bigger than 1 MB")
             rec["size"] = len(raw)
             rec["sha"] = hashlib.sha256(raw).hexdigest()
             rec["text"] = modul_decode(raw)
+        if known and isinstance(known[1].get("level"), int):
+            rec["level"] = known[1]["level"]
         recs.append(rec)
     return recs
 
@@ -6954,10 +7198,12 @@ def modul_storage_save(mid, data):
 # c112
 
 class ModulAPI:
-    def __init__(self, handle, mode):
+    def __init__(self, handle, mode, level=None):
         object.__setattr__(self, "_h", handle)
         object.__setattr__(self, "_mode", mode)
-        if mode == "off":
+        object.__setattr__(self, "_level", level)
+        object.__setattr__(self, "_allowed", modul_allowed_perms(mode, level))
+        if "full" in self._allowed:
             object.__setattr__(self, "raw", globals())
             object.__setattr__(self, "script_dir", SCRIPT_DIR)
 
@@ -6981,7 +7227,7 @@ class ModulAPI:
         return LANG
 
     def _need(self, perm):
-        if self._mode != "off" and perm not in MODUL_MODE_PERMS[self._mode]:
+        if perm not in self._allowed:
             raise PermissionError(mtext("нет разрешения: ", "no permission: ") + perm)
 
     def say(self, text="", color=None):
@@ -6991,7 +7237,10 @@ class ModulAPI:
             say(f"{DIM}[{self._h['id']}]{RESET} {col}{line}{end}")
 
     def t(self, ru="", en=""):
-        return str(ru if LANG == "ru" else en)
+        return mtext(ru, en)
+
+    def tkey(self, key, ru="", en=""):
+        return lang_plugin_text(self._h["id"], str(key), ru, en)
 
     def ask(self, prompt=""):
         self._need("ask")
@@ -7017,6 +7266,46 @@ class ModulAPI:
         self._need("storage")
         modul_storage_save(self._h["id"], data)
 
+    def net_get(self, url, timeout=15, max_bytes=VERIFIED_MAX_FILE):
+        self._need("net")
+        return modul_net_get(url, timeout, max_bytes)
+
+    def mods_list(self):
+        self._need("mods")
+        return modul_mods_list()
+
+    def mods_read(self, name):
+        self._need("mods")
+        return modul_mods_read(name)
+
+    def mods_write(self, name, data):
+        self._need("mods")
+        return modul_mods_write(name, data)
+
+    def mods_remove(self, name):
+        self._need("mods")
+        return modul_mods_remove(name)
+
+    def files_list(self, path="."):
+        self._need("files")
+        return modul_files_list(self._h["id"], path)
+
+    def files_read(self, path):
+        self._need("files")
+        return modul_files_read(self._h["id"], path)
+
+    def files_write(self, path, data):
+        self._need("files")
+        return modul_files_write(self._h["id"], path, data)
+
+    def files_remove(self, path):
+        self._need("files")
+        return modul_files_remove(self._h["id"], path)
+
+    def lang_register(self, code, name, data):
+        self._need("lang")
+        return lang_register_pack(self._h["id"], code, name, data)
+
 
 def modul_add_command(h, name, func, desc):
     if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_]{1,19}", name):
@@ -7029,7 +7318,7 @@ def modul_add_command(h, name, func, desc):
     h["commands"].append(name)
     if desc:
         row = (name + "  [" + h["id"] + "]", modul_clean_text(desc)[:300])
-        for lang in ("ru", "en"):
+        for lang in list(MODUL_HELP_ROWS):
             MODUL_HELP_ROWS[lang].append(row)
         h["rows"].append(row)
 
@@ -7063,9 +7352,10 @@ def modul_unload(mid):
     for name in h["commands"]:
         MODUL_COMMANDS.pop(name, None)
     for row in h["rows"]:
-        for lang in ("ru", "en"):
+        for lang in list(MODUL_HELP_ROWS):
             if row in MODUL_HELP_ROWS[lang]:
                 MODUL_HELP_ROWS[lang].remove(row)
+    lang_unregister_owner(mid)
 
 
 def modul_report_error(h, e):
@@ -7085,15 +7375,15 @@ def modul_call(h, func, *args):
     return None
 
 
-def modul_load(rec, mode):
+def modul_load(rec, mode, level=None):
     # c117
     mid = rec["id"]
     if mid in MODUL_LOADED:
         return True, ""
-    h = {"id": mid, "rec": rec, "mode": mode, "commands": [], "hooks": [], "rows": [], "errors": 0}
-    api = ModulAPI(h, mode)
+    h = {"id": mid, "rec": rec, "mode": mode, "level": level, "commands": [], "hooks": [], "rows": [], "errors": 0}
+    api = ModulAPI(h, mode, level)
     ns = {"__name__": "modul_" + mid, "api": api}
-    if mode != "off":
+    if mode != "off" and not (mode == "verified" and level == 1):
         ns["__builtins__"] = modul_safe_builtins(api)
     MODUL_LOADED[mid] = h
     try:
@@ -7105,6 +7395,8 @@ def modul_load(rec, mode):
     for event, func in list(h["hooks"]):
         if event == "start":
             modul_call(h, func)
+    if PENDING_LANG:
+        lang_restore(keep_missing=True)
     return True, ""
 
 
@@ -7144,17 +7436,268 @@ MODUL_PERMS = {
     "hooks": (1, "реагирует на события скрипта (start, run_done, command, exit)", "reacts to script events (start, run_done, command, exit)"),
     "ask": (1, "задаёт вопросы в консоли", "asks questions in the console"),
     "read_data": (1, "читает результат последнего run: список модов, версии, стороны", "reads the last run: mods, versions, sides"),
+    "lang": (1, "регистрирует переводы и языки", "registers translations and languages"),
     "storage": (2, "пишет свой файл modul_data/<id>.json (до 64 КБ)", "writes its own file modul_data/<id>.json (up to 64 KB)"),
+    "net": (3, "ходит в интернет через безопасный API", "uses the network through a safe API"),
+    "mods": (3, "читает и меняет jar-файлы модов", "reads and changes mod jar files"),
+    "files": (3, "читает и пишет файлы в своей папке modul_files/<id>", "reads and writes files in its modul_files/<id> folder"),
     "full": (4, "полный доступ: файлы, сеть, процессы, весь код скрипта", "full access: files, network, processes, the whole script"),
 }
 MODUL_MODE_PERMS = {
     "strict": {"commands", "hooks", "ask", "read_data"},
     "on": {"commands", "hooks", "ask", "read_data", "storage"},
 }
+
+# c176
+MODUL_LEVEL_PERMS = {
+    1: {"commands", "hooks", "ask", "read_data", "storage", "net", "mods", "files", "lang", "full"},
+    2: {"commands", "hooks", "ask", "storage", "net"},
+    3: {"commands", "hooks", "ask", "storage", "net", "mods"},
+    4: {"commands", "hooks", "ask", "storage", "files"},
+    5: {"lang"},
+}
 MODUL_API_PERM = {
     "command": "commands", "on": "hooks", "ask": "ask", "last_run": "read_data",
     "load": "storage", "save": "storage", "raw": "full", "script_dir": "full",
+    "net_get": "net", "mods_list": "mods", "mods_read": "mods", "mods_write": "mods",
+    "mods_remove": "mods", "files_list": "files", "files_read": "files",
+    "files_write": "files", "files_remove": "files", "lang_register": "lang",
 }
+
+# c183
+def modul_allowed_perms(mode, level=None):
+    if mode == "off":
+        return set(MODUL_PERMS)
+    if mode == "verified":
+        return set(MODUL_LEVEL_PERMS.get(level, set()))
+    return set(MODUL_MODE_PERMS.get(mode, set()))
+
+
+def modul_plugin_scan(rec):
+    info = rec.get("_scan")
+    if not isinstance(info, dict):
+        info = modul_scan_code(rec.get("text", ""))
+        rec["_scan"] = info
+    return info
+
+
+def modul_is_lang(rec):
+    return bool(modul_plugin_scan(rec).get("lang"))
+
+
+def modul_display_name(rec):
+    name = rec.get("name") or rec.get("id") or ""
+    return name + " (lang)" if modul_is_lang(rec) else name
+
+
+def modul_is_verified(rec):
+    entry = MODUL_STATE.get("verified", {}).get(rec.get("id"))
+    if not isinstance(entry, dict):
+        return False
+    return entry.get("file") == rec.get("file") and entry.get("sha256") == rec.get("sha")
+
+# c178
+def modul_url_check(url):
+    if not isinstance(url, str):
+        raise ValueError(mtext("нужна ссылка", "a URL is required"))
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme != "https" or not parts.hostname:
+        raise ValueError(mtext("разрешён только https", "only https is allowed"))
+    try:
+        infos = socket.getaddrinfo(parts.hostname, parts.port or 443, type=socket.SOCK_STREAM)
+    except OSError as e:
+        raise RuntimeError(mtext("не удалось разрешить адрес: ", "cannot resolve the host: ") + str(e))
+    for info in infos:
+        addr = str(info[4][0]).split("%", 1)[0]
+        try:
+            ip = ipaddress.ip_address(addr)
+        except ValueError:
+            raise PermissionError(mtext("плохой адрес: ", "bad address: ") + addr)
+        if not ip.is_global:
+            raise PermissionError(mtext("запрещён непубличный адрес: ", "non-public address is not allowed: ") + addr)
+    return parts
+
+
+def modul_net_get(url, timeout=15, max_bytes=VERIFIED_MAX_FILE):
+    modul_url_check(url)
+    if not isinstance(max_bytes, int) or max_bytes < 1:
+        raise ValueError(mtext("плохой лимит размера", "bad size limit"))
+    max_bytes = min(max_bytes, VERIFIED_MAX_FILE)
+    try:
+        timeout = max(1, min(int(timeout), 120))
+    except (TypeError, ValueError):
+        timeout = 15
+
+    class SafeRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            modul_url_check(newurl)
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), SafeRedirect())
+    req = urllib.request.Request(url, headers={"User-Agent": "auto-modpacker",
+                                               "Accept": "application/json, text/plain, */*"})
+    with opener.open(req, timeout=timeout) as resp:
+        modul_url_check(resp.geturl())
+        length = resp.headers.get("Content-Length")
+        if length:
+            try:
+                if int(length) > max_bytes:
+                    raise ValueError(mtext("ответ больше лимита", "the response is larger than the limit"))
+            except ValueError:
+                raise
+        data = resp.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise ValueError(mtext("ответ больше лимита", "the response is larger than the limit"))
+    return data
+
+# c179
+def modul_mods_path(name):
+    if not isinstance(name, str) or not name or name != os.path.basename(name) or "\x00" in name:
+        raise ValueError(mtext("плохое имя файла", "bad file name"))
+    low = name.lower()
+    if not (low.endswith(".jar") or low.endswith(".jar.disabled")):
+        raise ValueError(mtext("разрешены только .jar и .jar.disabled", "only .jar and .jar.disabled are allowed"))
+    full = os.path.join(SCRIPT_DIR, name)
+    if os.path.islink(full):
+        raise PermissionError(mtext("символические ссылки запрещены", "symbolic links are not allowed"))
+    return full
+
+
+def modul_mods_list():
+    out = []
+    try:
+        names = sorted(os.listdir(SCRIPT_DIR))
+    except OSError:
+        return out
+    for name in names:
+        low = name.lower()
+        if not (low.endswith(".jar") or low.endswith(".jar.disabled")):
+            continue
+        path = os.path.join(SCRIPT_DIR, name)
+        if not os.path.isfile(path):
+            continue
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            size = 0
+        out.append({"name": name, "size": size, "disabled": low.endswith(".disabled")})
+    return out
+
+
+def modul_mods_read(name):
+    path = modul_mods_path(name)
+    with open(path, "rb") as f:
+        data = f.read(VERIFIED_MAX_FILE + 1)
+    if len(data) > VERIFIED_MAX_FILE:
+        raise ValueError(mtext("файл больше 5 МБ", "file is bigger than 5 MB"))
+    return data
+
+
+def modul_mods_write(name, data):
+    path = modul_mods_path(name)
+    if isinstance(data, str):
+        data = data.encode("utf-8")
+    if not isinstance(data, (bytes, bytearray)):
+        raise ValueError(mtext("нужны bytes или строка", "bytes or a string is required"))
+    data = bytes(data)
+    if len(data) > VERIFIED_MAX_FILE:
+        raise ValueError(mtext("файл больше 5 МБ", "file is bigger than 5 MB"))
+    tmp = path + ".new"
+    try:
+        with open(tmp, "wb") as f:
+            f.write(data)
+        os.replace(tmp, path)
+    finally:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
+    return len(data)
+
+
+def modul_mods_remove(name):
+    path = modul_mods_path(name)
+    os.remove(path)
+    return True
+
+# c180
+def modul_files_root(mid):
+    return os.path.join(SCRIPT_DIR, "modul_files", mid)
+
+
+def modul_files_path(mid, path, allow_root=False):
+    if not isinstance(path, str) or "\x00" in path:
+        raise ValueError(mtext("плохой путь", "bad path"))
+    base = os.path.realpath(os.path.join(SCRIPT_DIR, "modul_files"))
+    root = os.path.realpath(modul_files_root(mid))
+    if root != base and not root.startswith(base + os.sep):
+        raise PermissionError(mtext("папка модуля вне modul_files", "the module folder escapes modul_files"))
+    full = os.path.realpath(os.path.join(root, path or "."))
+    if full != root and not full.startswith(root + os.sep):
+        raise PermissionError(mtext("путь вне папки модуля", "path escapes the module folder"))
+    if full == root and not allow_root:
+        raise ValueError(mtext("нужен путь к файлу", "a file path is required"))
+    return root, full
+
+
+def modul_files_list(mid, path="."):
+    root, full = modul_files_path(mid, path, allow_root=True)
+    os.makedirs(root, exist_ok=True)
+    if not os.path.isdir(full):
+        raise ValueError(mtext("это не папка", "not a folder"))
+    out = []
+    for name in sorted(os.listdir(full)):
+        item = os.path.join(full, name)
+        try:
+            is_dir = os.path.isdir(item)
+            size = os.path.getsize(item) if not is_dir else 0
+        except OSError:
+            is_dir, size = False, 0
+        out.append({"name": name, "dir": is_dir, "size": size})
+    return out
+
+
+def modul_files_read(mid, path):
+    _root, full = modul_files_path(mid, path)
+    with open(full, "rb") as f:
+        data = f.read(VERIFIED_MAX_FILE + 1)
+    if len(data) > VERIFIED_MAX_FILE:
+        raise ValueError(mtext("файл больше 5 МБ", "file is bigger than 5 MB"))
+    return data
+
+
+def modul_files_write(mid, path, data):
+    root, full = modul_files_path(mid, path)
+    if isinstance(data, str):
+        data = data.encode("utf-8")
+    if not isinstance(data, (bytes, bytearray)):
+        raise ValueError(mtext("нужны bytes или строка", "bytes or a string is required"))
+    data = bytes(data)
+    if len(data) > VERIFIED_MAX_FILE:
+        raise ValueError(mtext("файл больше 5 МБ", "file is bigger than 5 MB"))
+    os.makedirs(root, exist_ok=True)
+    parent = os.path.dirname(full)
+    if parent and parent != root:
+        os.makedirs(parent, exist_ok=True)
+    tmp = full + ".new"
+    try:
+        with open(tmp, "wb") as f:
+            f.write(data)
+        os.replace(tmp, full)
+    finally:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
+    return len(data)
+
+
+def modul_files_remove(mid, path):
+    _root, full = modul_files_path(mid, path)
+    os.remove(full)
+    return True
 
 # c125
 MODUL_SAFE_MODULES = {
@@ -7230,7 +7773,7 @@ def modul_check_import(name, line, bad):
 
 def modul_scan_code(text):
     # c131
-    info = {"problems": [], "perms": set(), "adds": [], "syntax": ""}
+    info = {"problems": [], "perms": set(), "adds": [], "syntax": "", "lang": False}
     try:
         tree = ast.parse(modul_strip_header(text))
     except SyntaxError as e:
@@ -7271,17 +7814,20 @@ def modul_scan_code(text):
                 info["perms"].add(MODUL_API_PERM[attr])
         elif isinstance(node, ast.Call):
             f = node.func
-            if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "api" and f.attr in ("command", "on"):
-                first = node.args[0] if node.args else None
-                if isinstance(first, ast.Constant) and isinstance(first.value, str):
-                    info["adds"].append((f.attr, first.value))
-                else:
-                    info["adds"].append((f.attr, "?"))
+            if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "api":
+                if f.attr == "lang_register":
+                    info["lang"] = True
+                if f.attr in ("command", "on"):
+                    first = node.args[0] if node.args else None
+                    if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                        info["adds"].append((f.attr, first.value))
+                    else:
+                        info["adds"].append((f.attr, "?"))
     bad.sort()
     return info
 
 
-def modul_evaluate(rec, mode):
+def modul_evaluate(rec, mode, level=None):
     # c133
     info = modul_scan_code(rec["text"])
     perms = set(info["perms"])
@@ -7293,6 +7839,17 @@ def modul_evaluate(rec, mode):
     why = []
     if info["syntax"]:
         why.append(mtext("ошибка в коде: ", "code error: ") + info["syntax"])
+    elif mode == "verified":
+        lvl = level if level is not None else rec.get("level")
+        if lvl not in MODUL_LEVEL_PERMS:
+            why.append(mtext("не указан strictlevel от 1 до 5", "strictlevel from 1 to 5 is missing"))
+        else:
+            if lvl != 1 and info["problems"]:
+                why.append(mtext("в коде есть запрещённое для этого уровня", "the code uses things that are blocked for this level"))
+            allowed = MODUL_LEVEL_PERMS[lvl]
+            lack = sorted(p for p in perms if p not in allowed)
+            if lack:
+                why.append(mtext("уровень ", "level ") + str(lvl) + mtext(" не разрешает: ", " does not allow: ") + ", ".join(lack))
     elif mode != "off":
         if info["problems"]:
             why.append(mtext("в коде есть запрещённое в этом режиме (см. список), нужен режим off", "the code uses things that are blocked in this mode (see the list), off mode is needed"))
@@ -7308,11 +7865,15 @@ MODUL_HELP_ROWS = {
         ("modul", 'Модули-дополнения: файлы .py/.txt рядом со скриптом с шапкой idname/idmodul/iddescription/idversion. Меню: список, вкл/выкл (безопасные модули включаются сразу, для опасных - сеть, файлы, программы - показывается предупреждение и вводится id), подробности, security, мануал.'),
         ("modul security strict|on|off", 'Режим защиты модулей. strict и on ограничивают модуль и не дают ему менять этот режим, off - без защиты. modul help - мануал.'),
         ("modul unprotect|protect <id>", 'Разрешить одному модулю работать без защиты (или вернуть защиту). Остальные остаются под общим режимом security. Разрешение действует, пока файл модуля не менялся. В меню: u N.'),
+        ("modul verified", 'Проверенные плагины из GitHub: список файлов, описание, strictlevel и установка. Режим проверенного плагина выставляется автоматически по strictlevel. В меню: v.'),
+        ("modul install <номер|имя>", 'Скачать проверенный плагин из папки Verified-Plugins, проверить хэш и установить.'),
     ],
     "en": [
         ("modul", 'Add-on modules: .py/.txt files next to the script with a header containing idname/idmodul/iddescription/idversion. Menu: list, on/off (safe modules are enabled immediately; dangerous ones—network, files, programs—show a warning and require the module ID), details, security, manual.'),
         ("modul security strict|on|off", 'Module protection mode. strict and on restrict modules and prevent them from changing this mode; off disables protection. modul help - manual.'),
         ("modul unprotect|protect <id>", 'Allow one module to run without protection (or restore protection). Other modules remain under the global security mode. The permission remains valid until the module file is changed. In the menu: u N.'),
+        ("modul verified", 'Verified plugins from GitHub: file list, description, strictlevel and installation. The mode of a verified plugin is set automatically from strictlevel. In the menu: v.'),
+        ("modul install <number|name>", 'Download a verified plugin from the Verified-Plugins folder, verify its hash and install it.'),
     ],
 }
 HELP_GROUPS["ru"].insert(len(HELP_GROUPS["ru"]) - 1, ("Модули", MODUL_HELP_ROWS["ru"]))
@@ -7375,11 +7936,14 @@ def modul_disclaimer(caps=None):
         say(RED + BOLD + mtext("ВНИМАНИЕ: модуль потенциально опасный, он может: ", "WARNING: the module is dangerous, it can: ") + "; ".join(modul_cap_texts(caps)) + RESET)
     else:
         say(RED + BOLD + mtext('ВНИМАНИЕ: МОДУЛИ ЭТО ЧУЖОЙ КОД', 'WARNING: MODULES ARE THIRD-PARTY CODE') + RESET)
-    for line in MODUL_DISCLAIMER["ru" if LANG == "ru" else "en"]:
+    for line in MODUL_DISCLAIMER[LANG]:
         say(line)
 
 
 def modul_show_manual():
+    if LANG not in ("ru", "en"):
+        say(LANG_MODULE_MANUAL[LANG])
+        return
     try:
         with open(MODUL_MANUAL_PATH, "r", encoding="utf-8") as f:
             text = f.read()
@@ -7392,6 +7956,17 @@ def modul_show_manual():
 
 
 
+def modul_show_quarantine():
+    items = MODUL_STATE.get("quarantine", {})
+    if not items:
+        return
+    say()
+    say(RED + BOLD + mtext("=== Карантин ===", "=== Quarantine ===") + RESET)
+    for mid, item in sorted(items.items()):
+        say(f"  {mid}: " + str(item.get("reason", "")))
+        say(DIM + "    " + str(item.get("file", "")) + RESET)
+
+
 def modul_show_list(recs):
     mode = MODUL_STATE["security"]
     say()
@@ -7399,13 +7974,14 @@ def modul_show_list(recs):
     if not recs:
         say(mtext('Модулей нет. Положите файл .py или .txt с шапкой (idname= idmodul= iddescription= idversion=) в папку со скриптом. Подробнее: modul help',
                   'No modules found. Put a .py or .txt file with the header (idname= idmodul= iddescription= idversion=) in the script folder. See modul help.'))
+        modul_show_quarantine()
         return
     for i, rec in enumerate(recs, 1):
         if rec["error"]:
             say(f"{i:>2}. {RED}[" + mtext("ошибка", "error") + f"]{RESET} {rec['file']}: {rec['error']}")
             continue
         rec_mode = modul_mode_for(rec)
-        _info, _perms, risk, why = modul_evaluate(rec, rec_mode)
+        _info, _perms, risk, why = modul_evaluate(rec, rec_mode, rec.get("level"))
         enabled = rec["id"] in MODUL_STATE["enabled"]
         if rec["id"] in MODUL_LOADED:
             state = GREEN + "[" + mtext("ВКЛ", "ON") + "]" + RESET
@@ -7415,28 +7991,33 @@ def modul_show_list(recs):
             state = DIM + "[" + mtext("выкл", "off") + "]" + RESET
         own_off = rec_mode == "off" and mode != "off"
         flag = (" " + RED + BOLD + "[" + mtext("БЕЗ ЗАЩИТЫ", "UNPROTECTED") + "]" + RESET) if own_off else ""
-        say(f"{i:>2}. {state} {BOLD}{rec['name']}{RESET} v{rec['ver']} ({rec['id']})  " + mtext("риск: ", "risk: ") + modul_risk_label(risk) + flag)
+        mode_note = ("verified L" + str(rec.get("level"))) if rec_mode == "verified" else rec_mode
+        say(f"{i:>2}. {state} {BOLD}{modul_display_name(rec)}{RESET} v{rec['ver']} ({rec['id']})  " + mtext("риск: ", "risk: ") + modul_risk_label(risk) + flag)
         say("      " + rec["desc"])
         if enabled and rec["id"] not in MODUL_LOADED and rec["id"] in MODUL_NOTES:
             say("      " + YELLOW + MODUL_NOTES[rec["id"]] + RESET)
         elif why and not enabled:
-            say("      " + DIM + mtext("в режиме ", "cannot be enabled in mode ") + rec_mode + mtext(" включить нельзя", "") + RESET)
+            say("      " + DIM + mtext("в режиме ", "cannot be enabled in mode ") + mode_note + mtext(" включить нельзя", "") + RESET)
         if modul_grant_stale(rec):
             say("      " + YELLOW + mtext("разрешение работать без защиты снято: файл изменился", "permission to run unprotected was dropped: the file changed") + RESET)
+    modul_show_quarantine()
 
 
 def modul_show_info(rec):
     mode = modul_mode_for(rec)
-    info, perms, risk, why = modul_evaluate(rec, mode)
+    info, perms, risk, why = modul_evaluate(rec, mode, rec.get("level"))
     say()
-    say(f"{GREEN}{BOLD}=== {rec['name']}  v{rec['ver']}  [{rec['id']}] ==={RESET}")
+    say(f"{GREEN}{BOLD}=== {modul_display_name(rec)}  v{rec['ver']}  [{rec['id']}] ==={RESET}")
     say(mtext("Описание: ", "Description: ") + rec["desc"])
     say(mtext("Файл: ", "File: ") + f"{rec['file']}, {rec['size']} B, sha256 {rec['sha'][:12]}")
     own_off = mode == "off" and MODUL_STATE["security"] != "off"
     note = ""
     if own_off:
         note = RED + mtext("  (личное разрешение этому модулю, общий режим: ", "  (personal permission for this module, global mode: ") + MODUL_STATE["security"] + ")" + RESET
-    say(mtext("Режим защиты: ", "Security mode: ") + mode + note)
+    mode_note = ("verified L" + str(rec.get("level"))) if mode == "verified" else mode
+    say(mtext("Режим защиты: ", "Security mode: ") + mode_note + note)
+    if mode == "verified":
+        say(mtext("strictlevel из check.txt: ", "strictlevel from check.txt: ") + str(rec.get("level")))
     say()
     say(BOLD + mtext("Что добавляет или меняет:", "What it adds or changes:") + RESET)
     for kind, value in info["adds"]:
@@ -7444,7 +8025,7 @@ def modul_show_info(rec):
             say("  + " + mtext("команда ", "command ") + value)
         else:
             say("  + " + mtext("реакция на событие ", "reaction to event ") + value)
-    caps = modul_danger(rec, perms, mode)
+    caps = modul_danger(rec, perms, mode, rec.get("level"))
     if caps:
         say("  ! " + mtext("может: ", "can: ") + "; ".join(modul_cap_texts(caps)))
     elif not info["adds"]:
@@ -7472,7 +8053,7 @@ def modul_show_info(rec):
     say(BOLD + mtext("Общий риск: ", "Overall risk: ") + RESET + modul_risk_label(risk))
     if own_off:
         say(DIM + mtext("Вернуть защиту только этому модулю: modul protect ", "Restore protection for this module only: modul protect ") + rec["id"] + mtext(" (в меню: u N)", " (in the menu: u N)") + RESET)
-    elif why and mode != "off" and not info["syntax"]:
+    elif why and mode == "strict" or (why and mode == "on"):
         say(DIM + mtext("Разрешить только этому модулю работать без защиты (у остальных она останется): modul unprotect ",
                         "Let only this module run without protection (the others keep it): modul unprotect ") + rec["id"] + mtext(" (в меню: u N)", " (in the menu: u N)") + RESET)
     return perms, risk, why
@@ -7480,9 +8061,18 @@ def modul_show_info(rec):
 
 
 def modul_enable_flow(rec):
+    if modul_is_verified(rec):
+        verified_sync_check()
+        fresh = verified_find_rec(rec["id"], rec["file"])
+        if fresh is None or fresh["error"]:
+            say(RED + mtext("Модуль не найден после проверки: ", "The module was not found after verification: ")
+                + rec["id"] + (": " + fresh["error"] if fresh else "") + RESET)
+            return
+        rec = fresh
     mode = modul_mode_for(rec)
-    _info, perms, _risk, why = modul_evaluate(rec, mode)
-    caps = [] if why else modul_danger(rec, perms, mode)
+    level = rec.get("level") if mode == "verified" else None
+    _info, perms, _risk, why = modul_evaluate(rec, mode, level)
+    caps = [] if why else ({} if mode == "verified" else modul_danger(rec, perms, mode, level))
     if why or caps:
         modul_show_info(rec)
         say()
@@ -7491,17 +8081,19 @@ def modul_enable_flow(rec):
         return
     if caps and not modul_confirm_danger(rec, caps):
         return
-    ok, err = modul_load(rec, mode)
+    ok, err = modul_load(rec, mode, level)
     if not ok:
         say(RED + mtext("Ошибка при запуске модуля: ", "Error while starting the module: ") + err + RESET)
         return
-    MODUL_STATE["enabled"][rec["id"]] = {"sha": rec["sha"], "mode": mode, "perms": sorted(perms)}
+    MODUL_STATE["enabled"][rec["id"]] = {"sha": rec["sha"], "mode": mode, "level": level, "perms": sorted(perms)}
     MODUL_NOTES.pop(rec["id"], None)
     modul_save_state()
     say(GREEN + mtext("Модуль включён: ", "Module enabled: ") + rec["id"] + RESET)
     h = MODUL_LOADED.get(rec["id"])
     if h and h["commands"]:
         say(mtext("Добавлены команды: ", "Commands added: ") + ", ".join(h["commands"]))
+    if mode == "verified":
+        verified_sync_check()
 
 
 def modul_disable(rec):
@@ -7511,7 +8103,7 @@ def modul_disable(rec):
     MODUL_NOTES.pop(rec["id"], None)
     modul_save_state()
     say(GREEN + mtext("Модуль выключен: ", "Module disabled: ") + rec["id"] + RESET)
-    if h and h["mode"] == "off":
+    if h and h["mode"] == "off" and not modul_is_verified(rec):
         say(YELLOW + mtext('Модуль работал без защиты. Перезапустите скрипт, чтобы убрать всё, что он успел изменить по части кода скрипта.',
                            'The module ran without protection. Restart the script to undo any changes it made to the script code.') + RESET)
 
@@ -7538,11 +8130,12 @@ def modul_load_enabled():
             why = mtext('файл изменился после включения, включи заново через modul', 'the file changed after it was enabled; enable it again using modul')
         else:
             rec_mode = modul_mode_for(rec)
-            _info, _perms, _risk, bad = modul_evaluate(rec, rec_mode)
+            rec_level = rec.get("level") if rec_mode == "verified" else None
+            _info, _perms, _risk, bad = modul_evaluate(rec, rec_mode, rec_level)
             if bad:
                 why = "; ".join(bad)
             else:
-                ok, err = modul_load(rec, rec_mode)
+                ok, err = modul_load(rec, rec_mode, rec_level)
                 if ok:
                     loaded += 1
                 else:
@@ -7569,7 +8162,7 @@ def modul_security_cmd(args):
     cur = MODUL_STATE["security"]
     if not args or args[0] not in MODUL_MODES:
         say("security: " + BOLD + cur + RESET)
-        for line in MODUL_MODE_TEXT["ru" if LANG == "ru" else "en"]:
+        for line in MODUL_MODE_TEXT[LANG]:
             say("  " + line)
         say(mtext("Сменить: modul security strict | on | off", "Change: modul security strict | on | off"))
         return
@@ -7604,6 +8197,8 @@ def modul_grant_stale(rec):
 
 def modul_mode_for(rec):
     # c148
+    if modul_is_verified(rec):
+        return "verified"
     grant = MODUL_STATE.get("unprotected", {}).get(rec["id"])
     if grant and rec.get("sha") and grant.get("sha") == rec["sha"]:
         return "off"
@@ -7616,19 +8211,20 @@ def modul_apply_mode(rec):
     if entry is None:
         return
     mode = modul_mode_for(rec)
+    level = rec.get("level") if mode == "verified" else None
     h = MODUL_LOADED.get(mid)
-    if h is not None and h["mode"] == mode and h["rec"]["sha"] == rec["sha"]:
+    if h is not None and h["mode"] == mode and h.get("level") == level and h["rec"]["sha"] == rec["sha"]:
         return
     modul_unload(mid)
     MODUL_NOTES.pop(mid, None)
     if entry.get("sha") != rec["sha"]:
         why = mtext('файл изменился после включения, включи заново через modul', 'the file changed after it was enabled; enable it again using modul')
     else:
-        _info, _perms, _risk, bad = modul_evaluate(rec, mode)
+        _info, _perms, _risk, bad = modul_evaluate(rec, mode, level)
         if bad:
             why = "; ".join(bad)
         else:
-            ok, err = modul_load(rec, mode)
+            ok, err = modul_load(rec, mode, level)
             why = "" if ok else err
     if why:
         MODUL_NOTES[mid] = why
@@ -7640,6 +8236,10 @@ def modul_apply_mode(rec):
 def modul_unprotect_flow(rec):
     if rec["error"]:
         say(rec["error"])
+        return
+    if modul_is_verified(rec):
+        say(mtext("Проверенный плагин работает по strictlevel и не может получить режим без защиты.",
+                  "A verified plugin runs under its strictlevel and cannot be switched to unprotected mode."))
         return
     if MODUL_STATE["security"] == "off":
         say(mtext("Общий режим уже off, защиты нет ни у одного модуля.", "The global mode is already off, no module is protected."))
@@ -7726,8 +8326,7 @@ MODUL_CODE_NAMES = {"eval", "exec", "compile", "__import__", "getattr", "setattr
                     "exit", "quit"}
 
 def modul_cap_texts(caps):
-    i = 0 if LANG == "ru" else 1
-    return [MODUL_CAP_TEXT[c][i] for c in caps]
+    return [mtext(MODUL_CAP_TEXT[c][0], MODUL_CAP_TEXT[c][1]) for c in caps]
 
 
 def modul_capabilities(text, real=False):
@@ -7764,7 +8363,7 @@ def modul_capabilities(text, real=False):
     return [c for c in MODUL_CAP_ORDER if c in found]
 
 
-def modul_danger(rec, perms, mode):
+def modul_danger(rec, perms, mode, level=None):
     caps = modul_capabilities(rec["text"], real=(mode == "off"))
     if "full" in perms and "code" not in caps:
         caps = [c for c in MODUL_CAP_ORDER if c in set(caps) | {"code"}]
@@ -7783,8 +8382,8 @@ def modul_menu():
     while True:
         recs = modul_scan()
         modul_show_list(recs)
-        say(mtext('Номер - вкл/выкл | i N - подробности | u N - без защиты вкл/выкл | s - security | h - мануал | d - дисклеймер | q - выход',
-                  'Number - on/off | i N - details | u N - toggle unprotected mode | s - security | h - manual | d - disclaimer | q - quit'))
+        say(mtext('Номер - вкл/выкл | i N - подробности | u N - без защиты вкл/выкл | s - security | v - проверенные плагины | h - мануал | d - дисклеймер | q - выход',
+                  'Number - on/off | i N - details | u N - toggle unprotected mode | s - security | v - verified plugins | h - manual | d - disclaimer | q - quit'))
         answer = modul_ask("modul> ")
         low = answer.lower()
         if low in ("", "q", "exit"):
@@ -7793,6 +8392,8 @@ def modul_menu():
             modul_show_manual()
         elif low in ("d", "disclaimer"):
             modul_disclaimer()
+        elif low in ("v", "verified"):
+            verified_show_list()
         elif low in ("s", "security") or low.startswith("s "):
             modul_security_cmd(low.split()[1:])
         elif low.startswith("i "):
@@ -7824,6 +8425,13 @@ def do_modul(args):
         modul_show_manual()
     elif args[0] == "list":
         modul_show_list(modul_scan())
+    elif args[0] == "verified":
+        verified_show_list()
+    elif args[0] == "install":
+        if len(args) < 2:
+            say(mtext("Использование: modul install <номер|имя>", "Usage: modul install <number|name>"))
+        else:
+            verified_install_by_token(args[1])
     elif args[0] in ("unprotect", "protect"):
         if len(args) < 2:
             say(mtext("Использование: modul %s <id или номер>", "Usage: modul %s <id or number>") % args[0])
@@ -7836,8 +8444,434 @@ def do_modul(args):
             else:
                 modul_protect(rec)
     else:
-        say(mtext("Использование: modul | modul list | modul security strict|on|off | modul unprotect|protect <id> | modul help",
-                  "Usage: modul | modul list | modul security strict|on|off | modul unprotect|protect <id> | modul help"))
+        say(mtext("Использование: modul | modul list | modul security strict|on|off | modul unprotect|protect <id> | modul verified | modul install <номер|имя> | modul help",
+                  "Usage: modul | modul list | modul security strict|on|off | modul unprotect|protect <id> | modul verified | modul install <number|name> | modul help"))
+
+# c175
+def verified_norm(name):
+    return os.path.basename(str(name or "")).strip().lower()
+
+
+def verified_id_from_file(name):
+    base = verified_norm(name)
+    if base.endswith(".py"):
+        base = base[:-3]
+    elif base.endswith(".txt"):
+        base = base[:-4]
+    return re.sub(r"[^a-z0-9_]", "_", base).strip("_")[:32]
+
+
+def verified_parse_check(text):
+    out = {}
+    cur = None
+    for raw in str(text or "").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip().lower()
+        value = value.strip()
+        if key == "modulid":
+            cur = {"file": value, "level": None, "desc": ""}
+            if value:
+                out[verified_norm(value)] = cur
+        elif cur is not None:
+            if key == "strictlevel":
+                try:
+                    cur["level"] = int(value)
+                except (TypeError, ValueError):
+                    cur["level"] = None
+            elif key == "moduldescription":
+                cur["desc"] = value
+    return out
+
+
+def verified_remote(force=False):
+    now = time.time()
+    cached = VERIFIED_INDEX_CACHE.get("items")
+    if not force and isinstance(cached, dict) and now - VERIFIED_INDEX_CACHE.get("ts", 0) < 300:
+        return cached
+    data = json.loads(modul_net_get(VERIFIED_INDEX_URL, timeout=20).decode("utf-8", "replace"))
+    if not isinstance(data, list):
+        raise RuntimeError(mtext("GitHub вернул не список файлов", "GitHub did not return a file list"))
+    check_url = VERIFIED_RAW_BASE + "check.txt"
+    for item in data:
+        if isinstance(item, dict) and item.get("name") == "check.txt":
+            check_url = item.get("download_url") or check_url
+            break
+    check_text = modul_net_get(check_url, timeout=20).decode("utf-8", "replace")
+    meta = verified_parse_check(check_text)
+    meta_by_id = {}
+    for key, value in meta.items():
+        meta_by_id[verified_id_from_file(key)] = value
+    items = {}
+    for item in data:
+        if not isinstance(item, dict) or item.get("type") != "file":
+            continue
+        name = str(item.get("name") or "")
+        low = name.lower()
+        if name == "check.txt" or name.startswith(".") or not low.endswith(MODUL_EXT):
+            continue
+        size = item.get("size")
+        if isinstance(size, int) and size > VERIFIED_MAX_FILE:
+            continue
+        key = verified_norm(name)
+        info = meta.get(key) or meta_by_id.get(verified_id_from_file(name)) or {}
+        items[key] = {
+            "name": name,
+            "id": verified_id_from_file(name),
+            "sha": str(item.get("sha") or ""),
+            "size": size if isinstance(size, int) else 0,
+            "download": item.get("download_url") or (VERIFIED_RAW_BASE + urllib.parse.quote(name)),
+            "level": info.get("level"),
+            "desc": modul_one_line(info.get("desc", ""), 200),
+        }
+    VERIFIED_INDEX_CACHE["ts"] = now
+    VERIFIED_INDEX_CACHE["items"] = items
+    return items
+
+
+def verified_git_blob_sha(data):
+    h = hashlib.sha1()
+    h.update(b"blob " + str(len(data)).encode("ascii") + b"\0")
+    h.update(data)
+    return h.hexdigest()
+
+# c181
+def verified_download(item):
+    raw = modul_net_get(item["download"], timeout=30, max_bytes=VERIFIED_MAX_FILE)
+    if item.get("size") and len(raw) != item["size"]:
+        raise ValueError(mtext("размер файла не совпал с GitHub", "the file size does not match GitHub"))
+    sha = verified_git_blob_sha(raw)
+    if item.get("sha") and sha != item["sha"]:
+        raise ValueError(mtext("хэш файла не совпал с GitHub", "the file hash does not match GitHub"))
+    text = modul_decode(raw)
+    fields, _used = modul_parse_header(text)
+    header_id = fields.get("idmodul") or fields.get("modulid") or ""
+    if header_id and verified_id_from_file(header_id) != item["id"]:
+        raise ValueError(mtext("id внутри файла не совпал с check.txt", "the ID inside the file does not match check.txt"))
+    if "strictlevel" in fields:
+        try:
+            header_level = int(str(fields["strictlevel"]).strip())
+        except (TypeError, ValueError):
+            raise ValueError(mtext("strictlevel внутри файла не число", "strictlevel inside the file is not a number"))
+        if header_level != item["level"]:
+            raise ValueError(mtext("strictlevel внутри файла не совпал с check.txt", "strictlevel inside the file does not match check.txt"))
+    info = modul_scan_code(text)
+    if info.get("syntax"):
+        raise ValueError(mtext("в плагине ошибка кода: ", "the plugin has a code error: ") + info["syntax"])
+    return raw, sha
+
+
+def verified_write_file(name, raw):
+    base = os.path.basename(str(name or ""))
+    if not base or base != name or not base.lower().endswith(MODUL_EXT) or "\x00" in base:
+        raise ValueError(mtext("плохое имя файла плагина", "bad plugin file name"))
+    path = os.path.join(SCRIPT_DIR, base)
+    if os.path.islink(path):
+        raise PermissionError(mtext("символические ссылки запрещены", "symbolic links are not allowed"))
+    try:
+        with open(path, "rb") as f:
+            old = f.read()
+    except OSError:
+        old = None
+    if old == raw:
+        return path
+    if old is not None:
+        os.makedirs(QUARANTINE_DIR, exist_ok=True)
+        backup = os.path.join(QUARANTINE_DIR, base + "." + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + ".before-install")
+        shutil.move(path, backup)
+        say(YELLOW + mtext("Старый файл сохранён в карантине: ", "The old file was saved to quarantine: ") + backup + RESET)
+    tmp = path + ".new"
+    try:
+        with open(tmp, "wb") as f:
+            f.write(raw)
+        os.replace(tmp, path)
+    finally:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
+    return path
+
+
+def verified_stop_unprotected():
+    stopped = []
+    for mid in list(MODUL_LOADED):
+        h = MODUL_LOADED.get(mid)
+        if h is None or h.get("mode") != "off":
+            continue
+        if modul_is_verified(h.get("rec", {})):
+            continue
+        modul_unload(mid)
+        MODUL_NOTES[mid] = mtext("выгружен перед установкой проверенного плагина", "unloaded before installing a verified plugin")
+        stopped.append(mid)
+    if stopped:
+        say(YELLOW + mtext("Перед установкой выгружены модули без защиты: ", "Modules running unprotected were unloaded before installation: ")
+            + ", ".join(stopped) + RESET)
+    return stopped
+
+
+def verified_store(mid, item, raw, sha):
+    MODUL_STATE.setdefault("verified", {})[mid] = {
+        "file": modul_one_line(item["name"], 120),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "sha1": sha,
+        "level": item["level"],
+        "desc": modul_one_line(item.get("desc", ""), 200),
+        "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+    }
+    MODUL_STATE.setdefault("quarantine", {}).pop(mid, None)
+    MODUL_STATE.get("unprotected", {}).pop(mid, None)
+    modul_save_state()
+
+
+def verified_find_rec(mid, name=None):
+    for rec in modul_scan():
+        if rec["id"] == mid or (name and rec["file"].lower() == str(name).lower()):
+            return rec
+    return None
+
+
+def verified_install_entry(item):
+    mid = item.get("id") or verified_id_from_file(item.get("name", ""))
+    level = item.get("level")
+    if not MODUL_ID_RE.fullmatch(mid):
+        say(RED + mtext("Плохое имя плагина: ", "Bad plugin name: ") + str(item.get("name")) + RESET)
+        return False
+    if level not in (1, 2, 3, 4, 5):
+        say(RED + mtext("В check.txt нет strictlevel от 1 до 5 для ", "check.txt has no strictlevel from 1 to 5 for ") + str(item.get("name")) + RESET)
+        return False
+    if not item.get("sha"):
+        say(RED + mtext("GitHub не вернул sha файла, установка отменена", "GitHub did not return the file sha, installation cancelled") + RESET)
+        return False
+    verified_sync_check()
+    try:
+        raw, sha = verified_download(item)
+    except Exception as e:
+        say(RED + mtext("Не удалось скачать плагин: ", "Could not download the plugin: ") + str(e) + RESET)
+        return False
+    verified_stop_unprotected()
+    try:
+        path = verified_write_file(item["name"], raw)
+    except Exception as e:
+        say(RED + mtext("Не удалось записать плагин: ", "Could not write the plugin: ") + str(e) + RESET)
+        return False
+    verified_store(mid, item, raw, sha)
+    say(GREEN + mtext("Установлен проверенный плагин: ", "Verified plugin installed: ") + mid + f" (strictlevel {level}), {path}" + RESET)
+    rec = verified_find_rec(mid, item["name"])
+    if rec is None or rec["error"]:
+        say(YELLOW + mtext("Файл установлен, но модуль не читается: ", "The file is installed, but the module cannot be read: ")
+            + (rec["error"] if rec else mtext("нет в списке", "not in the list")) + RESET)
+        return False
+    modul_enable_flow(rec)
+    verified_sync_check()
+    return True
+
+
+def verified_install_by_token(token):
+    token = str(token or "").strip()
+    try:
+        items = verified_remote(force=True)
+    except Exception as e:
+        say(RED + mtext("Не удалось получить список проверенных плагинов: ", "Could not fetch the verified plugin list: ") + str(e) + RESET)
+        return
+    keys = sorted(items)
+    if not keys:
+        say(YELLOW + mtext("В Verified-Plugins пока нет плагинов.", "Verified-Plugins has no plugins yet.") + RESET)
+        return
+    item = None
+    if token.isdigit():
+        n = int(token)
+        if 1 <= n <= len(keys):
+            item = items[keys[n - 1]]
+    else:
+        low = token.lower()
+        for key in keys:
+            if low in (key, items[key]["id"], items[key]["name"].lower()):
+                item = items[key]
+                break
+    if item is None:
+        say(mtext("Нет такого проверенного плагина: ", "No such verified plugin: ") + token)
+        return
+    verified_install_entry(item)
+
+
+def verified_show_list():
+    try:
+        items = verified_remote()
+    except Exception as e:
+        say(RED + mtext("Не удалось получить список проверенных плагинов: ", "Could not fetch the verified plugin list: ") + str(e) + RESET)
+        return
+    say()
+    say(GREEN + BOLD + mtext("Проверенные плагины GitHub", "Verified GitHub plugins") + RESET)
+    if not items:
+        say(YELLOW + mtext("В Verified-Plugins пока нет плагинов.", "Verified-Plugins has no plugins yet.") + RESET)
+        return
+    for i, key in enumerate(sorted(items), 1):
+        item = items[key]
+        entry = MODUL_STATE.get("verified", {}).get(item["id"])
+        if item["id"] in MODUL_STATE.get("quarantine", {}):
+            state = RED + "[" + mtext("карантин", "quarantined") + "]" + RESET
+        elif entry and entry.get("file") == item["name"] and entry.get("sha1") == item["sha"]:
+            state = GREEN + "[" + mtext("установлен", "installed") + "]" + RESET
+        elif entry:
+            state = YELLOW + "[" + mtext("версия отличается", "different version") + "]" + RESET
+        else:
+            state = DIM + "[" + mtext("не установлен", "not installed") + "]" + RESET
+        level = item.get("level")
+        level_text = ("strictlevel " + str(level)) if level in (1, 2, 3, 4, 5) else mtext("нет strictlevel в check.txt", "no strictlevel in check.txt")
+        say(f"{i:>2}. {state} {BOLD}{item['name']}{RESET}  {level_text}")
+        if item.get("desc"):
+            say("      " + item["desc"])
+    say(mtext("Установить: modul install <номер|имя>", "Install: modul install <number|name>"))
+
+
+def verified_quarantine(mid, entry, reason):
+    base = os.path.basename(str(entry.get("file") or ""))
+    src = os.path.join(SCRIPT_DIR, base)
+    dst = ""
+    try:
+        os.makedirs(QUARANTINE_DIR, exist_ok=True)
+        dst = os.path.join(QUARANTINE_DIR, base + "." + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + ".quarantine")
+        if base and os.path.isfile(src):
+            shutil.move(src, dst)
+    except OSError as e:
+        say(RED + mtext("Не удалось переместить файл в карантин: ", "Could not move the file to quarantine: ") + str(e) + RESET)
+        return False
+    modul_unload(mid)
+    MODUL_STATE["enabled"].pop(mid, None)
+    MODUL_STATE.get("unprotected", {}).pop(mid, None)
+    MODUL_STATE.get("verified", {}).pop(mid, None)
+    MODUL_STATE.setdefault("quarantine", {})[mid] = {
+        "file": modul_one_line(dst or base, 200),
+        "reason": modul_one_line(reason, 300),
+        "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+    }
+    modul_save_state()
+    say(RED + mtext("Плагин отправлен в карантин: ", "Plugin quarantined: ") + mid + " (" + reason + ")" + RESET)
+    if dst:
+        say(DIM + dst + RESET)
+    return True
+
+
+def verified_forbid(mid, reason):
+    entry = MODUL_STATE.get("verified", {}).get(mid)
+    rec = verified_find_rec(mid, entry.get("file") if entry else None)
+    MODUL_STATE.get("verified", {}).pop(mid, None)
+    MODUL_STATE.get("unprotected", {}).pop(mid, None)
+    modul_save_state()
+    if mid in MODUL_LOADED:
+        modul_unload(mid)
+    if rec is not None and mid in MODUL_STATE.get("enabled", {}):
+        modul_apply_mode(rec)
+    note = mtext("карантин запрещён, файл оставлен, проверенный статус снят", "quarantine forbidden, the file was kept and verified status removed")
+    MODUL_NOTES[mid] = note + ("; " + MODUL_NOTES[mid] if MODUL_NOTES.get(mid) else "")
+    say(YELLOW + mtext("Карантин запрещён. Проверенный статус снят, плагин теперь обычный модуль и работает по общему security: ",
+                       "Quarantine forbidden. Verified status removed; the plugin is now a regular module under global security: ") + mid + RESET)
+    say(DIM + reason + RESET)
+    return True
+
+
+def verified_handle_difference(mid, entry, reason, remote, interactive):
+    if not interactive:
+        return verified_quarantine(mid, entry, reason)
+    say()
+    say(RED + BOLD + mtext("Проверенный плагин изменился: ", "Verified plugin changed: ") + mid + RESET)
+    say(mtext("Файл: ", "File: ") + str(entry.get("file")) + mtext(", причина: ", ", reason: ") + reason)
+    while True:
+        answer = modul_ask(mtext("q - карантин | r - скачать заново | f - запретить карантин: ",
+                                 "q - quarantine | r - re-download | f - forbid quarantine: ")).strip().lower()
+        if not answer:
+            return verified_quarantine(mid, entry, reason)
+        if answer in ("q", "1", "карантин", "quarantine"):
+            return verified_quarantine(mid, entry, reason)
+        if answer in ("r", "2", "reload", "re-download", "reinstall", "перекачать"):
+            if remote is None:
+                say(RED + mtext("На GitHub этого файла больше нет, скачать заново нельзя.", "This file is no longer on GitHub, cannot re-download.") + RESET)
+                continue
+            if remote.get("level") not in (1, 2, 3, 4, 5):
+                say(RED + mtext("В check.txt нет strictlevel для этого файла, скачать заново нельзя.",
+                                "check.txt has no strictlevel for this file, cannot re-download.") + RESET)
+                continue
+            try:
+                raw, sha = verified_download(remote)
+                verified_write_file(remote["name"], raw)
+            except Exception as e:
+                say(RED + mtext("Не удалось скачать заново: ", "Could not re-download: ") + str(e) + RESET)
+                continue
+            item = dict(remote)
+            verified_store(mid, item, raw, sha)
+            rec = verified_find_rec(mid, item["name"])
+            if rec is not None and mid in MODUL_STATE.get("enabled", {}):
+                MODUL_STATE["enabled"][mid]["sha"] = rec["sha"]
+                MODUL_STATE["enabled"][mid]["level"] = rec.get("level")
+                MODUL_STATE["enabled"][mid]["mode"] = "verified"
+                modul_apply_mode(rec)
+            say(GREEN + mtext("Плагин скачан заново и проверен: ", "Plugin re-downloaded and verified: ") + mid + RESET)
+            return True
+        if answer in ("f", "3", "forbid", "запретить"):
+            return verified_forbid(mid, reason)
+        say(mtext("Введите q, r или f.", "Enter q, r or f."))
+
+# c182
+def verified_sync_check(interactive=True):
+    global VERIFIED_SYNC_ACTIVE
+    if VERIFIED_SYNC_ACTIVE or not MODUL_STATE.get("verified"):
+        return True
+    VERIFIED_SYNC_ACTIVE = True
+    try:
+        try:
+            items = verified_remote(force=True)
+        except Exception as e:
+            say(YELLOW + mtext("Проверка проверенных плагинов пропущена (нет интернета или GitHub недоступен): ",
+                               "Verified plugin check skipped (no internet or GitHub is unavailable): ") + str(e) + RESET)
+            return False
+        changed = 0
+        for mid in list(MODUL_STATE.get("verified", {})):
+            entry = MODUL_STATE.get("verified", {}).get(mid)
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get("file", "")
+            path = os.path.join(SCRIPT_DIR, os.path.basename(name))
+            try:
+                with open(path, "rb") as f:
+                    raw = f.read()
+            except OSError:
+                raw = None
+            remote = items.get(verified_norm(name))
+            reason = None
+            if raw is None:
+                reason = mtext("файл не найден", "file not found")
+            elif remote is None:
+                reason = mtext("файла больше нет в Verified-Plugins", "the file is no longer in Verified-Plugins")
+            elif remote.get("sha") and verified_git_blob_sha(raw) != remote.get("sha"):
+                reason = mtext("хэш не совпал с GitHub", "hash does not match GitHub")
+            elif hashlib.sha256(raw).hexdigest() != entry.get("sha256"):
+                reason = mtext("локальный файл изменился", "the local file changed")
+            elif remote.get("level") != entry.get("level"):
+                reason = mtext("strictlevel в check.txt изменился", "strictlevel in check.txt changed")
+            elif remote.get("desc") != entry.get("desc"):
+                reason = mtext("описание в check.txt изменилось", "description in check.txt changed")
+            else:
+                fields, _used = modul_parse_header(modul_decode(raw))
+                header_id = fields.get("idmodul") or fields.get("modulid") or ""
+                if header_id and verified_id_from_file(header_id) != mid:
+                    reason = mtext("id внутри файла не совпал", "the ID inside the file does not match")
+                elif "strictlevel" in fields:
+                    try:
+                        header_level = int(str(fields["strictlevel"]).strip())
+                    except (TypeError, ValueError):
+                        header_level = None
+                    if header_level != entry.get("level"):
+                        reason = mtext("strictlevel внутри файла не совпал", "strictlevel inside the file does not match")
+            if reason:
+                changed += 1
+                verified_handle_difference(mid, entry, reason, remote, interactive)
+        return changed == 0
+    finally:
+        VERIFIED_SYNC_ACTIVE = False
 
 
 def log_command_crash(cmd, exc):
@@ -7937,6 +8971,21 @@ T = {
         "banner_title": "  Auto-Modpacker by A Simple Block",
         "banner_note": 'Ищет моды на Modrinth и CurseForge. Команда bulk берёт верх категории и аддоны к найденным модам, всё пишется в found_mods/mods.txt (для чтения) и found_mods/mods_ai.txt (сжатый вариант для нейронки, меньше токенов).',
         "commands": ('Команды: key <ключ> | search <тег|name:название|ссылка ...> | show <N> | save <N> | saveall | bulk <тег|name:название|ссылка ...> | addons <slug|modid> | build <ссылка|slug ...> | importlink | update | newaddons | help | exit'),
+        "finder_title": 'Auto-Finder — поиск и сборка модпаков',
+        "label_search": 'search <тег|name:название|ссылка ...>',
+        "label_show": 'show <N>',
+        "label_save": 'save <N>',
+        "label_saveall": 'saveall',
+        "label_bulk": 'bulk <тег|name:название|ссылка ...>',
+        "label_addons": 'addons <slug|modid>',
+        "label_build": 'build <ссылка|slug> [загрузчик] [версия] [client|server] [mr=N] [cf=N]',
+        "label_newaddons": 'newaddons <ссылка|slug> [период] [загрузчик] [версия]',
+        "label_importlink": 'importlink [prefer CF|M] [min mr=N cf=N]',
+        "label_modupdate": 'modupdate [версия] [загрузчик] [prefer ...] [min ...]',
+        "label_finder": 'finder <команда> ...',
+        "label_key": 'key <ключ>',
+        "label_slug": 'slug',
+        "finder_prefix_help": 'Любую команду Auto-Finder можно вызвать с префиксом finder. Например: finder update.',
         "key_set": 'Ключ CurseForge сохранён рядом со скриптом.',
         "key_usage": 'Использование: key <ключ>',
         "no_internet": 'Нет интернета, поиск невозможен.',
@@ -8016,6 +9065,21 @@ T = {
         "commands": ("Commands: key <key> | search <tag|name:title|url ...> | show <N> | save <N> | saveall | "
                      "bulk <tag|name:title|url ...> | addons <slug|modid> | build <link|slug ...> | importlink | "
                      "update | newaddons | help | exit"),
+        "finder_title": "Auto-Finder — mod search and modpack building",
+        "label_search": "search <tag|name:title|url ...>",
+        "label_show": "show <N>",
+        "label_save": "save <N>",
+        "label_saveall": "saveall",
+        "label_bulk": "bulk <tag|name:title|url ...>",
+        "label_addons": "addons <slug|modid>",
+        "label_build": "build <link|slug> [loader] [version] [client|server] [mr=N] [cf=N]",
+        "label_newaddons": "newaddons <link|slug> [period] [loader] [version]",
+        "label_importlink": "importlink [prefer CF|M] [min mr=N cf=N]",
+        "label_modupdate": "modupdate [version] [loader] [prefer ...] [min ...]",
+        "label_finder": "finder <command> ...",
+        "label_key": "key <key>",
+        "label_slug": "slug",
+        "finder_prefix_help": "Any Auto-Finder command can be called with the finder prefix. Example: finder update.",
         "key_set": 'The CurseForge API key has been saved next to the script.',
         "key_usage": "Usage: key <key>",
         "no_internet": "No internet, nothing to search with.",
@@ -12244,8 +13308,15 @@ def classify_mod(m, internet, api_key):
 def _finder_sync():
     _AUTO_FINDER["LANG"] = LANG
     _AUTO_FINDER["say"] = say
+    _AUTO_FINDER["_t"] = mtext
     _AUTO_FINDER["_AUDIT_TARGET_MC"] = TARGET_MC
     _AUTO_FINDER["_AUDIT_API_LOADER"] = API_LOADER
+    if LANG in LANG_FINDER_T:
+        _AUTO_FINDER["T"][LANG] = LANG_FINDER_T[LANG]
+    if LANG in LANG_FINDER_DEP:
+        pack = LANG_FINDER_DEP[LANG]
+        for kind, labels in _AUTO_FINDER["DEP_TYPE_LABEL"].items():
+            labels[LANG] = pack[kind]
 
 
 def _auto_finder_sync():
@@ -12284,51 +13355,39 @@ def _do_auto_finder_help():
     tr = _AUTO_FINDER["T"][LANG]
     cols = shutil.get_terminal_size((100, 24)).columns
     width = max(40, min(cols, 100) - 8)
-    title = "Auto-Finder — поиск и сборка модпаков" if LANG == "ru" else "Auto-Finder — mod search and modpack building"
+    title = tr["finder_title"]
     say()
     say(f"{GREEN}{BOLD}§ {title}{RESET}")
     rows = [
-        ("search <тег|name:название|ссылка ...>", "help_search"),
-        ("show <N>", "help_show"),
-        ("save <N>", "help_save"),
-        ("saveall", "help_saveall"),
-        ("bulk <тег|name:название|ссылка ...>", "help_bulk"),
-        ("addons <slug|modid>", "help_addons"),
-        ("build <ссылка|slug> [загрузчик] [версия] [client|server] [mr=N] [cf=N]", "help_build"),
-        ("newaddons <ссылка|slug> [период] [загрузчик] [версия]", "help_newaddons"),
-        ("importlink [prefer CF|M] [min mr=N cf=N]", "help_importlink"),
-        ("modupdate [версия] [загрузчик] [prefer ...] [min ...]", "help_update"),
-        ("finder <команда> ...", "help_slug"),
+        ("label_search", "help_search"),
+        ("label_show", "help_show"),
+        ("label_save", "help_save"),
+        ("label_saveall", "help_saveall"),
+        ("label_bulk", "help_bulk"),
+        ("label_addons", "help_addons"),
+        ("label_build", "help_build"),
+        ("label_newaddons", "help_newaddons"),
+        ("label_importlink", "help_importlink"),
+        ("label_modupdate", "help_update"),
+        ("label_finder", "help_slug"),
     ]
-    for command, key in rows:
-        label = command
-        if LANG == "en":
-            labels = {
-                "search <тег|name:название|ссылка ...>": "search <tag|name:title|url ...>",
-                "build <ссылка|slug> [загрузчик] [версия] [mr=N] [cf=N]": "build <link|slug> [loader] [version] [mr=N] [cf=N]",
-                "newaddons <ссылка|slug> [период] [загрузчик] [версия]": "newaddons <link|slug> [period] [loader] [version]",
-                "importlink [prefer CF|M] [min mr=N cf=N]": "importlink [prefer CF|M] [min mr=N cf=N]",
-                "modupdate [версия] [загрузчик] [prefer ...] [min ...]": "modupdate [version] [loader] [prefer ...] [min ...]",
-                "finder <команда> ...": "finder <command> ...",
-            }
-            label = labels.get(command, command)
-        desc = tr.get(key, "")
-        if command == "finder <команда> ...":
-            desc = ("Любую команду Auto-Finder можно вызвать с префиксом finder. Например: finder update."
-                    if LANG == "ru" else
-                    "Any Auto-Finder command can be called with the finder prefix. Example: finder update.")
+    for label_key, key in rows:
+        label = tr[label_key]
+        desc = tr[key]
+        if label_key == "label_finder":
+            desc = tr["finder_prefix_help"]
         say()
         say(f"  {BOLD}{label}{RESET}")
         for line in help_lines(desc, width):
             say(f"    {HELP_RAIL} {line}")
     say()
-    say(f"  {BOLD}key <ключ>{RESET}" if LANG == "ru" else f"  {BOLD}key <key>{RESET}")
-    key_desc = tr.get("help_key", "")
+    say(f"  {BOLD}{tr['label_key']}{RESET}")
+    key_desc = tr["help_key"]
     for line in help_lines(key_desc, width):
         say(f"    {HELP_RAIL} {line}")
     say()
-    say(f"  {BOLD}slug{RESET}")
-    for line in help_lines(tr.get("help_slug", ""), width):
+    say(f"  {BOLD}{tr['label_slug']}{RESET}")
+    for line in help_lines(tr["help_slug"], width):
         say(f"    {HELP_RAIL} {line}")
 
 
@@ -12341,10 +13400,14 @@ def main():
     except OSError:
         CONSOLE_FILE = None
 
+    modul_load_state()
     choose_language()
+    verified_sync_check()
+    modul_start()
+    lang_restore()
+    _auto_finder_sync()
     print_banner()
     api_key = load_cf_key()
-    modul_start()
     while True:
         try:
             line = input("> ").strip()
@@ -12427,6 +13490,8 @@ def main():
                 do_help()
             elif cmd == "modul":
                 do_modul(args)
+            elif cmd == "lang":
+                do_lang(args)
             elif cmd == "finder":
                 try:
                     finder_parts = _AUTO_FINDER["shlex"].split(rest)
@@ -12479,6 +13544,27 @@ def main():
         log_command_crash("auto-finder-save", exc)
     if CONSOLE_FILE:
         CONSOLE_FILE.close()
+
+# c172
+def do_lang(args):
+    if not args:
+        say(T[LANG]["lang_current"].format(code=LANG, name=lang_display_name(LANG)))
+        say(T[LANG]["lang_available"])
+        for code in lang_codes():
+            say(T[LANG]["lang_list_item"].format(code=code, name=lang_display_name(code)))
+        say(T[LANG]["lang_usage"])
+        return
+    code = args[0].strip().lower()
+    if not LANG_CODE_RE.fullmatch(code) or code not in lang_codes():
+        say(T[LANG]["lang_unknown"].format(code=code))
+        return
+    if code == LANG:
+        say(T[LANG]["lang_current"].format(code=code, name=lang_display_name(code)))
+        return
+    if not lang_apply(code):
+        say(T[LANG]["lang_error"].format(code=code))
+        return
+    say(T[LANG]["lang_switched"].format(code=code, name=lang_display_name(code)))
 
 if __name__ == "__main__":
     main()
