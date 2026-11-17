@@ -2,6 +2,10 @@
 
 *English · [Русский](README.ru.md)*
 
+Thanks https://github.com/simpleitem 
+my friend for GUI version 
+https://github.com/simpleitem/BlockPacker
+
 A command-line tool for Minecraft players, modpack makers, and server admins. It scans a local `mods` folder, detects client/server side, finds missing dependencies and conflicts, checks updates on **Modrinth and CurseForge**, and can search, collect, and build modpacks. Pure Python, no dependencies, works on Windows, Linux, macOS, and Termux.
 
 ## Why it exists, and what makes it different
