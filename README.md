@@ -71,6 +71,7 @@ the reason why the two parts: Auto-Modpacker and Auto-Finder I first released Au
 About THE CHAPTER: why does this look like an AI readme, written with Groq, since I had no idea what to write or how to attract many people about the license; I don't want to talk about it, I just say it is for the benefit of protecting the community, specifically via the link 
 https://github.com/SimpleBlockDev/Source-Available-Noncommercial-License 
 
+all subsequent words about using AI will be ignored
 
 ## Enjoy!
 
