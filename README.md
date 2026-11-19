@@ -58,7 +58,11 @@ The code is public to read, learn from, and use, but this is **not open source**
 
 Read the full text in LICENSE.md. It prevails over this summary.
 
-Well, let's start: recently my project was accused of vibcode without going into the script first. THE CODE WAS WRITTEN BY ME 100% I DID NOT USE A AI WHEN CREATING IT AT ALL. The reason I didn't split it into modules and wrote everything in one script is that I wanted convenience and convenience in development (I'm not talking about the time of creation, a monolithic file really complicates and lengthens creation), I'm talking about ease of use, which can simply be specified in the terminal Auto-Modpacker.py and everything will work so it can be simply transferred.
+Well, let's start: recently my project was accused of vibcode without going into the script first. 
+
+THE CODE WAS WRITTEN BY ME 100% I DID NOT USE A AI WHEN CREATING IT AT ALL.
+
+The reason I didn't split it into modules and wrote everything in one script is that I wanted convenience and convenience in development (I'm not talking about the time of creation, a monolithic file really complicates and lengthens creation), I'm talking about ease of use, which can simply be specified in the terminal Auto-Modpacker.py and everything will work so it can be simply transferred.
 
 In general, there are many advantages to a monolithic script
 
@@ -68,7 +72,7 @@ for AI it would be easier to split into modules, but I wrote it in a single scri
 
 the reason why the two parts: Auto-Modpacker and Auto-Finder I first released Auto-Finder because I considered Auto-Modpacker unfinished; these were different projects that I had to weave together; in some places, I could have done better, but I think that's enough.
 
-About THE CHAPTER: why does this look like an AI readme, written with Groq, since I had no idea what to write or how to attract many people about the license; I don't want to talk about it, I just say it is for the benefit of protecting the community, specifically via the link 
+About THE CHAPTER: why does this look like an AI readme, written with copilot, since I had no idea what to write or how to attract many people about the license; I don't want to talk about it, I just say it is for the benefit of protecting the community, specifically via the link 
 https://github.com/SimpleBlockDev/Source-Available-Noncommercial-License 
 
 all subsequent words about using AI will be ignored
